@@ -1,5 +1,5 @@
-# yolo-from-scratch
-Implementation of a Yolo object detector from scratch
+# yolo-object-detection
+Implementation of a Yolo neural network object detector
 
 
 # FiftyOne COCO dataset
