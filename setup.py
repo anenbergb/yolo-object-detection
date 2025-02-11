@@ -23,6 +23,8 @@ setup(
         "pillow",
         "types-Pillow",
         "tabulate",
+        "fiftyone",
+        "pycocotools",
     ],
     extras_require={
         "torch": [
@@ -35,7 +37,6 @@ setup(
             "jupyter_contrib_nbextensions",
             "plotly",
             "seaborn",
-            "fiftyone",
         ],
         "dev": ["black", "mypy", "flake8", "isort", "ipdb"],
     },
