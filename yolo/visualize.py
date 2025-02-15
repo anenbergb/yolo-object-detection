@@ -1,6 +1,6 @@
 from PIL import ImageDraw, ImageFont
 
-
+import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from torchvision.utils import draw_bounding_boxes, draw_segmentation_masks
@@ -16,7 +16,13 @@ def plot(imgs, row_title=None, **imshow_kwargs):
 
     num_rows = len(imgs)
     num_cols = len(imgs[0])
-    _, axs = plt.subplots(nrows=num_rows, ncols=num_cols, squeeze=False)
+    fig_scaling = 3
+    fig, axs = plt.subplots(
+        nrows=num_rows,
+        ncols=num_cols,
+        squeeze=False,
+        figsize=(fig_scaling * num_cols, fig_scaling * num_rows),
+    )
     for row_idx, row in enumerate(imgs):
         for col_idx, img in enumerate(row):
             boxes = None
@@ -51,12 +57,25 @@ def plot(imgs, row_title=None, **imshow_kwargs):
             ax = axs[row_idx, col_idx]
             ax.imshow(img.permute(1, 2, 0).numpy(), **imshow_kwargs)
             ax.set(xticklabels=[], yticklabels=[], xticks=[], yticks=[])
+            ax.axis("off")
 
     if row_title is not None:
         for row_idx in range(num_rows):
             axs[row_idx, 0].set(ylabel=row_title[row_idx])
 
-    plt.tight_layout()
+    # Adjust layout to reduce white space
+    fig.tight_layout(pad=0)
+
+    # Save the figure to a numpy array
+    fig.canvas.draw()
+    image_array = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
+    image_array = image_array.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+
+    # Convert ARGB to RGB
+    image_array = image_array[..., [1, 2, 3]]
+
+    plt.close(fig)  # Close the figure to free memory
+    return image_array
 
 
 def render_bounding_boxes(image, annotations, category_names):

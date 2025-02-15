@@ -101,7 +101,7 @@ class CocoDataset(torch.utils.data.Dataset):
             [self.class_id2idx[id.item()] for id in class_ids]
         )
         target["class_id"] = class_ids
-
+        target["iscrowd"] = torch.tensor(target["iscrowd"], dtype=torch.bool)
         if self.transform:
             img, target = self.transform(img, target)
         return img, target
@@ -195,9 +195,9 @@ class CollateWithAnchors:
                 }
             )
         batch = torch.utils.data.default_collate(batch_list)
-        label_names = ["boxes", "labels", "class_idx", "class_id", "iscrowd"]
+        label_names = ["boxes", "class_idx", "class_id", "iscrowd"]
         for label_name in label_names:
-            batch[label_name] = [x[label_name] for x in batched_image_target]
+            batch[label_name] = [x[1][label_name] for x in batched_image_target]
 
         label_tensors = self.make_label_tensors(batch["boxes"], batch["class_idx"])
         batch.update(label_tensors)
