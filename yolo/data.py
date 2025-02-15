@@ -14,6 +14,7 @@ def get_val_transforms(
     mean=(0.485, 0.456, 0.406),
     std=(0.229, 0.224, 0.225),
 ):
+    # TODO: clip the boxes to be within the limit of the image, but not equal, just slightly smaller
     return v2.Compose(
         [
             v2.ToImage(),  # convert PIL image to tensor
@@ -33,14 +34,25 @@ class CocoDataset(torch.utils.data.Dataset):
         self.dataset = wrap_dataset_for_transforms_v2(CocoDetection(root = root, annFile = annFile))
         self.transform = transform
 
-        self.category_id2name = {id: d["name"] for id,d in self.dataset.coco.cats.items()}
+        self.class_id2name = {id: d["name"] for id,d in self.dataset.coco.cats.items()}
+        self.class_id2idx = {id: idx for idx, id in enumerate(self.dataset.coco.cats.keys())}
+        
+        self.class_names = [d["name"] for d in self.dataset.coco.cats.values()]
+        self.class_idx2id = {idx: id for id, idx in self.class_id2idx.items()}
 
+    def num_classes(self):
+        return len(self.dataset.coco.cats)
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx):
         img, target = self.dataset[idx]
+        class_ids = target["labels"]
+        target["class_names"] = [self.class_id2name[id.item()] for id in class_ids]
+        target["labels"] = torch.tensor([self.class_id2idx[id.item()] for id in class_ids])
+        target["class_ids"] = class_ids
+
         if self.transform:
             img, target = self.transform(img, target)
         return img, target
