@@ -152,6 +152,11 @@ class CollateWithAnchors:
         coordinates: (N,L,4) where ground-truth encoded txtytwth is only defined for the spatial_anchor_mask >= 0 values. MSELoss reduction="none", then apply mask to ignore mask < 0
         classification: (N,L,C) where C=80 is one-hot encoding for class at the anchor box, only defined for spatial_anchor_mask >= 0 values. BCELoss reduction="none", then apply mask to ignore mask < 0
         """
+
+        # Shape (N,L) where L = 22743
+        # >= 0 index into gt boxes (highest IOU) per image
+        # -1: ignore (IOU > 0.5)
+        # -2: negative examples. anchors with IOU <= 0.5
         spatial_anchor_mask = make_spatial_anchor_mask(
             batch_boxes,
             self.spatial_anchors,
@@ -182,6 +187,7 @@ class CollateWithAnchors:
             "objectness_label": objectness_label,
             "coordinates_label": coord_label,
             "classification_label": classification_label,
+            "spatial_anchor_mask": spatial_anchor_mask,
         }
 
     def __call__(self, batched_image_target):

@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 from typing import List, Tuple
 import itertools
 from collections import Counter
@@ -124,6 +125,31 @@ def make_anchor_map(
         anchors_maps.append(anchors_flat)
     anchors_map = torch.cat(anchors_maps, axis=0)
     return anchors_map
+
+
+def make_cxcy_map(
+    scales: List[int],
+    image_height: int,
+    image_width: int,
+    num_anchors_per_scale: int = 3,
+):
+    cxcy_map_list = []
+    for scale in scales:
+        scaled_height = int(image_height / scale)
+        scaled_width = int(image_width / scale)
+
+        x_axis = torch.arange(scaled_width)
+        y_axis = torch.arange(scaled_height)
+        grid_y, grid_x = torch.meshgrid(y_axis, x_axis, indexing="ij")  # .shape [13,19]
+        grid_xy = torch.stack([grid_x, grid_y], dim=-1)  # .shape [13, 19, 2]
+        grid_xy_expanded = grid_xy.unsqueeze(2)
+        grid_xy_copied = grid_xy_expanded.expand(
+            *grid_xy.shape[:2], num_anchors_per_scale, 2
+        )
+        grid_xy_flat = grid_xy_copied.flatten(end_dim=-2)
+        cxcy_map_list.append(grid_xy_flat)
+    cxcy_map = torch.cat(cxcy_map_list, axis=0)
+    return cxcy_map
 
 
 def get_valid_gt_cxcy(
@@ -289,3 +315,39 @@ def encode_boxes(boxes_xyxy, scale, anchor, epsilon=1e-5):
         assert txywh.shape[0] == 1
         txywh = txywh[0]
     return txywh
+
+
+class DecodeBoxes(nn.Module):
+    def __init__(
+        self,
+        anchors: List[Tuple[int, int]],
+        scales: List[int],
+        image_height: int,
+        image_width: int,
+        num_anchors_per_scale: int = 3,
+    ):
+        super().__init__()
+        self.scale_map = make_scale_map(
+            scales, image_height, image_width, num_anchors_per_scale
+        ).view(
+            1, -1, 1
+        )  # [1,L,1]
+        self.anchor_map = make_anchor_map(
+            anchors, scales, image_height, image_width, num_anchors_per_scale
+        ).unsqueeze(
+            0
+        )  # [1,L,2]
+        self.cxcy_map = make_cxcy_map(
+            scales, image_height, image_width, num_anchors_per_scale
+        ).unsqueeze(
+            0
+        )  # [1,L,2]
+
+    def forward(self, tx_ty_tw_th):
+        tx_ty, tw_th = torch.split(
+            tx_ty_tw_th, [2, 2], dim=-1
+        )  # shape [N,13,19,n_anchors,2]
+        bx_by = self.scale_map * (torch.sigmoid(tx_ty) + self.cxcy_map)
+        bw_bh = self.anchor_map * torch.exp(tw_th)
+        bx_by_bw_bh = torch.cat([bx_by, bw_bh], axis=-1)
+        return bx_by_bw_bh
