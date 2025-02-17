@@ -4,6 +4,8 @@ from typing import List, Tuple
 import itertools
 from collections import Counter
 from torchvision.ops import box_iou
+from torchvision import tv_tensors
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 
 
 ################################
@@ -327,6 +329,9 @@ class DecodeBoxes(nn.Module):
         num_anchors_per_scale: int = 3,
     ):
         super().__init__()
+        self.image_height = image_height
+        self.image_width = image_width
+
         self.scale_map = make_scale_map(
             scales, image_height, image_width, num_anchors_per_scale
         ).view(
@@ -344,9 +349,7 @@ class DecodeBoxes(nn.Module):
         )  # [1,L,2]
 
     def forward(self, tx_ty_tw_th):
-        tx_ty, tw_th = torch.split(
-            tx_ty_tw_th, [2, 2], dim=-1
-        )  # shape [N,13,19,n_anchors,2]
+        tx_ty, tw_th = torch.split(tx_ty_tw_th, [2, 2], dim=-1)  # .shape [N,L,2]
         bx_by = self.scale_map * (torch.sigmoid(tx_ty) + self.cxcy_map)
         bw_bh = self.anchor_map * torch.exp(tw_th)
         bx_by_bw_bh = torch.cat([bx_by, bw_bh], axis=-1)
