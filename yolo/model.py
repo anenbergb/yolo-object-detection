@@ -4,6 +4,8 @@ from torch import nn
 from collections import OrderedDict
 from torchvision.ops import Conv2dNormActivation
 from functools import partial
+from torchvision.models import get_model
+from torchvision.models._utils import IntermediateLayerGetter
 
 
 class YoloBlock(nn.Module):
@@ -129,6 +131,11 @@ class YoloFPN(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        names: "0", "1", "2"
+        example feature_maps: [1, 256, 52, 76], [1, 512, 26, 38], [1, 1024, 13, 19]
+        for input shape (416,608)
+        """
         assert len(x) == len(self.lateral_convs)
         names = list(x.keys())
         feature_maps = list(x.values())
@@ -146,3 +153,75 @@ class YoloFPN(nn.Module):
             results.insert(0, x_to_head)
         out = OrderedDict([(k, v) for k, v in zip(names, results)])
         return out
+
+
+class YoloHead(nn.Module):
+    def __init__(self, in_channels: int, num_anchors: int = 3, num_classes: int = 80):
+        super().__init__()
+        # tx, ty, tw, th, objectness, 80 classes
+        self.num_anchors = num_anchors
+        self.num_classes = num_classes
+        feat_dim = num_anchors * (5 + num_classes)
+        self.fc = nn.Conv2d(in_channels, feat_dim, kernel_size=1, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        preds_BCHW = self.fc(x)
+        preds_BHWC = preds_BCHW.permute(0, 2, 3, 1)  # .shape [10,13,19,255]
+        shape_BHWAC = [
+            *preds_BHWC.shape[:-1],
+            self.num_anchors,
+            self.num_classes + 5,
+        ]  # .shape [10,13,19,3,85]
+        preds_BHWAC = preds_BHWC.reshape(shape_BHWAC)
+        preds_BflatC = preds_BHWAC.flatten(
+            start_dim=1, end_dim=-2
+        )  # .shape [10,13,19,3,85] -> [10,13*19*3,85]
+        return preds_BflatC
+
+
+class Yolo(nn.Module):
+    def __init__(
+        self,
+        num_classes: int = 80,
+        num_anchors_per_scale: int = 3,
+        backbone_name: str = "resnext50_32x4d",
+    ):
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_anchors_per_scale = num_anchors_per_scale
+        backbone = get_model(
+            backbone_name, weights="DEFAULT", norm_layer=torch.nn.BatchNorm2d
+        )
+
+        # modifed from https://github.com/pytorch/vision/blob/main/torchvision/models/detection/backbone_utils.py#L118
+        returned_layers = [2, 3, 4]  # final 3 layers
+        return_layers = {f"layer{k}": str(v) for v, k in enumerate(returned_layers)}
+        in_channels_stage2 = backbone.inplanes // 8
+        in_channels_list = [in_channels_stage2 * 2 ** (i - 1) for i in returned_layers]
+        self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
+        fpn_channel_list = [256, 512, 1024]
+        self.fpn = YoloFPN(in_channels_list, out_channels_list=fpn_channel_list)
+        self.heads = nn.ModuleList(
+            [
+                YoloHead(
+                    in_channels=ch,
+                    num_anchors=num_anchors_per_scale,
+                    num_classes=num_classes,
+                )
+                for ch in fpn_channel_list
+            ]
+        )
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        x = self.body(x)
+        x = self.fpn(x)
+        preds_per_scale = [head(tensor) for head, tensor in zip(self.heads, x.values())]
+        preds = torch.cat(preds_per_scale, dim=1)  # [N,num_spatial_anchors,85]
+        tx_ty_tw_th, objectness, class_logits = torch.split(
+            preds, [4, 1, self.num_classes], dim=-1
+        )
+        return {
+            "tx_ty_tw_th": tx_ty_tw_th,
+            "objectness": objectness,
+            "class_logits": class_logits,
+        }
