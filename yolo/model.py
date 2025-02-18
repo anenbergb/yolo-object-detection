@@ -163,6 +163,7 @@ class YoloHead(nn.Module):
         self.num_classes = num_classes
         feat_dim = num_anchors * (5 + num_classes)
         self.fc = nn.Conv2d(in_channels, feat_dim, kernel_size=1, bias=False)
+        nn.init.kaiming_uniform_(self.fc.weight, a=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         preds_BCHW = self.fc(x)
