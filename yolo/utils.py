@@ -35,20 +35,29 @@ class YoloLoss(nn.Module):
         super().__init__()
         self.bceloss = nn.BCEWithLogitsLoss(reduction="none")
         self.mseloss = nn.MSELoss(reduction="none")
+        self.weight_objectness = 1.0
+        self.weight_class = 1.0
+        self.weight_coordinates = 1.0
 
     def forward_objectness(self, objectness, gt_boxes_label, gt_and_neg_boxes_label):
         loss = self.bceloss(objectness, gt_boxes_label)
-        loss = (loss * gt_and_neg_boxes_label).sum()
+        loss = (loss * gt_and_neg_boxes_label).sum() / gt_and_neg_boxes_label.sum()
         return loss
 
     def forward_class(self, class_logits, classification_label, gt_boxes_label):
+        num_gt_boxes = gt_boxes_label.sum()
+        if num_gt_boxes == 0:
+            return 0
         loss = self.bceloss(class_logits, classification_label)
-        loss = (loss * gt_boxes_label).sum()
+        loss = (loss * gt_boxes_label).sum() / num_gt_boxes
         return loss
 
     def forward_coordinates(self, tx_ty_tw_th, coordinates_label, gt_boxes_label):
+        num_gt_boxes = gt_boxes_label.sum()
+        if num_gt_boxes == 0:
+            return 0
         loss = self.mseloss(tx_ty_tw_th, coordinates_label)
-        loss = (loss * gt_boxes_label).sum()
+        loss = (loss * gt_boxes_label).sum() / num_gt_boxes
         return loss
 
     def forward(self, preds, targets):
@@ -69,25 +78,25 @@ class YoloLoss(nn.Module):
 
         """
 
-        objectness_loss = self.forward_objectness(
+        objectness_loss = self.weight_objectness * self.forward_objectness(
             preds["objectness"],
             targets["gt_boxes_label"],
             targets["gt_and_neg_boxes_label"],
         )
-        class_loss = self.forward_class(
+        class_loss = self.weight_class * self.forward_class(
             preds["class_logits"],
             targets["classification_label"],
             targets["gt_boxes_label"],
         )
-        tx_ty_tw_th_loss = self.forward_coordinates(
+        coordinates_loss = self.weight_coordinates * self.forward_coordinates(
             preds["tx_ty_tw_th"],
             targets["coordinates_label"],
             targets["gt_boxes_label"],
         )
-        loss = objectness_loss + class_loss + tx_ty_tw_th_loss
+        loss = objectness_loss + class_loss + coordinates_loss
         return {
             "loss": loss,
             "objectness_loss": objectness_loss,
             "class_loss": class_loss,
-            "coordinates_loss": tx_ty_tw_th_loss,
+            "coordinates_loss": coordinates_loss,
         }
