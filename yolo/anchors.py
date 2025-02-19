@@ -270,6 +270,24 @@ def make_spatial_anchor_mask(
     return spatial_anchor_mask
 
 
+def safe_inverse_sigmoid(x, epsilon=1e-5):
+    """
+    Compute the inverse sigmoid (logit) function safely.
+
+    Args:
+        x (torch.Tensor): Input tensor with values in the range (0, 1).
+        epsilon (float): Small value to avoid division by zero or log of zero.
+
+    Returns:
+        torch.Tensor: Output tensor with the inverse sigmoid applied.
+    """
+    # Clamp the input to avoid values exactly 0 or 1
+    x = torch.clamp(x, epsilon, 1 - epsilon)
+
+    # Compute the inverse sigmoid (logit)
+    return torch.log(x / (1 - x))
+
+
 def encode_boxes(boxes_xyxy, scale, anchor, epsilon=1e-5):
     """
     box is expected to be in (x1, y1, x2, y2) format with 0 <= x1 < x2 and 0 <= y1 < y2.
@@ -306,9 +324,9 @@ def encode_boxes(boxes_xyxy, scale, anchor, epsilon=1e-5):
     boxes_center_xy = boxes_xyxy[:, :2] + boxes_wh / 2
 
     bxy = boxes_center_xy / scale
-    qxy = torch.frac(bxy) + epsilon
+    qxy = torch.frac(bxy)
     # using the Yolo box encoding definition, qxy = sigmoid(txty)
-    txy = torch.log(qxy / (1 - qxy))
+    txy = safe_inverse_sigmoid(qxy, epsilon=epsilon)
 
     # epsilon isn't required since width of the box has to be greater than 0
     twh = torch.log(boxes_wh / anchor)
