@@ -25,6 +25,41 @@ def labels_getter(inputs: Any) -> List[torch.Tensor]:
     return [inputs[label_name] for label_name in label_names]
 
 
+def get_train_transforms(
+    resize_size=608,
+    mean=(0.485, 0.456, 0.406),
+    std=(0.229, 0.224, 0.225),
+):
+    """
+
+    RandomIOUCrop https://pytorch.org/vision/main/_modules/torchvision/transforms/v2/_geometry.html#RandomIoUCrop
+
+
+    """
+    return v2.Compose(
+        [
+            v2.ToImage(),  # convert PIL image to tensor
+            v2.ToDtype(torch.uint8, scale=True),
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.RandomPhotometricDistort(
+                brightness=(0.875, 1.125),
+                contrast=(0.7, 1.3),
+                saturation=(0.8, 1.2),
+                hue=(-0.05, 0.05),
+                p=0.25,
+            ),
+            v2.Resize((resize_size, resize_size)),  # resize the image. bilinear
+            v2.ClampBoundingBoxes(),  # clamp bounding boxes to be within the image
+            v2.SanitizeBoundingBoxes(
+                labels_getter=labels_getter
+            ),  # Remove degenerate/invalid bounding boxes and their corresponding labels and masks.
+            v2.ToDtype(torch.float32, scale=True),  # Normalize expects float input
+            v2.Normalize(mean=mean, std=std),
+            # v2.ToPureTensor(),
+        ]
+    )
+
+
 # Other possible transforms to consider
 # https://pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html#sphx-glr-auto-examples-transforms-plot-transforms-e2e-py
 def get_val_transforms(
@@ -32,7 +67,6 @@ def get_val_transforms(
     mean=(0.485, 0.456, 0.406),
     std=(0.229, 0.224, 0.225),
 ):
-    # TODO: clip the boxes to be within the limit of the image, but not equal, just slightly smaller
     return v2.Compose(
         [
             v2.ToImage(),  # convert PIL image to tensor
