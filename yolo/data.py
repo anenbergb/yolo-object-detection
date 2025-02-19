@@ -27,15 +27,9 @@ def labels_getter(inputs: Any) -> List[torch.Tensor]:
 
 def get_train_transforms(
     resize_size=608,
-    mean=(0.485, 0.456, 0.406),
+    mean=(0.485, 0.456, 0.406),  # ImageNet mean and std
     std=(0.229, 0.224, 0.225),
 ):
-    """
-
-    RandomIOUCrop https://pytorch.org/vision/main/_modules/torchvision/transforms/v2/_geometry.html#RandomIoUCrop
-
-
-    """
     return v2.Compose(
         [
             v2.ToImage(),  # convert PIL image to tensor
@@ -64,7 +58,7 @@ def get_train_transforms(
 # https://pytorch.org/vision/main/auto_examples/transforms/plot_transforms_e2e.html#sphx-glr-auto-examples-transforms-plot-transforms-e2e-py
 def get_val_transforms(
     resize_size=608,
-    mean=(0.485, 0.456, 0.406),
+    mean=(0.485, 0.456, 0.406),  # ImageNet mean and std
     std=(0.229, 0.224, 0.225),
 ):
     return v2.Compose(
@@ -108,6 +102,7 @@ class CocoDataset(torch.utils.data.Dataset):
         self.class_names = [d["name"] for d in self.dataset.coco.cats.values()]
         self.class_idx2id = {idx: id for id, idx in self.class_id2idx.items()}
 
+    @property
     def num_classes(self):
         return len(self.dataset.coco.cats)
 
@@ -127,8 +122,18 @@ class CocoDataset(torch.utils.data.Dataset):
             "class_name": List[str]
             "class_idx": torch.tensor (N,)
             "class_id": torch.tensor (N,)
+            "iscrows": torch.tensor (N,)
         """
         img, target = self.dataset[idx]
+        if "labels" not in target:  # empty image
+            target["boxes"] = tv_tensors.BoundingBoxes(
+                torch.empty(0, 4, dtype=torch.float),
+                format=tv_tensors.BoundingBoxFormat.XYXY,
+                canvas_size=(img.height, img.width),
+            )
+            target["labels"] = torch.tensor([], dtype=torch.long)
+            target["iscrowd"] = []
+
         class_ids = target.pop("labels")
         # target["class_name"] = [self.class_id2name[id.item()] for id in class_ids]
         target["class_idx"] = torch.tensor(
@@ -201,9 +206,15 @@ class CollateWithAnchors:
             verbose=self.verbose,
         )
 
-        objectness_label = (spatial_anchor_mask >= 0).to(torch.long).unsqueeze(-1)
-        coord_label = torch.zeros(*spatial_anchor_mask.shape, 4)
-        classification_label = torch.zeros(*spatial_anchor_mask.shape, self.num_classes)
+        gt_boxes_label = (spatial_anchor_mask >= 0).to(torch.float).unsqueeze(-1)
+        gt_and_neg_boxes_label = (
+            (spatial_anchor_mask != -1).to(torch.float).unsqueeze(-1)
+        )
+
+        coord_label = torch.zeros(*spatial_anchor_mask.shape, 4, dtype=torch.float)
+        classification_label = torch.zeros(
+            *spatial_anchor_mask.shape, self.num_classes, dtype=torch.float
+        )
 
         for batch_idx, L_idx in zip(*torch.where(spatial_anchor_mask >= 0)):
             box_idx = spatial_anchor_mask[batch_idx, L_idx]
@@ -218,10 +229,10 @@ class CollateWithAnchors:
             class_idx = batch_class_idx[batch_idx][box_idx]
             classification_label[batch_idx, L_idx][class_idx] = 1
         return {
-            "objectness_label": objectness_label,
+            "gt_boxes_label": gt_boxes_label,
+            "gt_and_neg_boxes_label": gt_and_neg_boxes_label,
             "coordinates_label": coord_label,
             "classification_label": classification_label,
-            "spatial_anchor_mask": spatial_anchor_mask,
         }
 
     def __call__(self, batched_image_target):
