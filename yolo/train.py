@@ -22,12 +22,15 @@ from yolo.data import (
 from yolo.torchvision_utils import set_weight_decay
 from yolo.utils import YoloLoss, DetectionMetrics
 from yolo.anchors import DecodeDetections
+from yolo.visualize import plot_grid
 
 
 @dataclass
 class TrainingConfig:
     output_dir: str
     overwrite_output_dir: bool = field(default=True)  # overwrite the old model
+    eval_only: bool = field(default=False)
+    resume: bool = field(default=False)
     resume_from_checkpoint: str = field(default=None)
 
     coco_dataset_root: str = field(default="/media/bryan/ssd01/fiftyone/coco-2017")
@@ -90,6 +93,10 @@ class TrainingConfig:
     scales: List[int] = field(default_factory=lambda: [8, 16, 32])
     torchvision_backbone_name: str = field(default="resnext50_32x4d")
 
+    # eval
+    box_min_size: float = field(default=5.0)
+    box_min_area: float = field(default=50.0)
+
 
 def train_yolo(config: TrainingConfig):
     """
@@ -134,6 +141,17 @@ def train_yolo(config: TrainingConfig):
         config.image_size,
         num_anchors_per_scale=num_anchors_per_scale,
         num_classes=train_dataset.num_classes,
+    )
+
+    detection_decoder = DecodeDetections(
+        config.anchors,
+        config.scales,
+        config.image_size,
+        config.image_size,
+        class_names=train_dataset.class_names,
+        num_anchors_per_scale=num_anchors_per_scale,
+        box_min_size=config.box_min_size,
+        box_min_area=config.box_min_area,
     )
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -202,7 +220,9 @@ def train_yolo(config: TrainingConfig):
     model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, val_dataloader, scheduler
     )
-    if config.resume_from_checkpoint is not None and os.path.exists(
+    if config.resume:
+        accelerator.load_state()
+    elif config.resume_from_checkpoint is not None and os.path.exists(
         config.resume_from_checkpoint
     ):
         accelerator.load_state(config.resume_from_checkpoint)
@@ -264,30 +284,47 @@ def train_yolo(config: TrainingConfig):
             model,
             yololoss,
             val_dataloader,
+            detection_decoder,
             limit_val_iters=config.limit_val_iters,
             global_step=global_step,
         )
-        # if accelerator.is_main_process:
-        #     val_print_str = f"Validation metrics [Epoch {epoch}]: "
-        #     for k, v in val_metrics.items():
-        #         val_print_str += f"{k}: {v:.3f} "
-        #     accelerator.print(val_print_str)
-        #     log = {f"val/{k}": v for k, v in val_metrics.items() if not k.startswith("loss")}
-        #     log["loss/val"] = val_metrics["loss"]
-        #     accelerator.log(log, step=global_step)
+        if accelerator.is_main_process:
+            val_print_str = f"Validation metrics [Epoch {epoch}]: "
+            AP = val_metrics.get("AP", 0.0)
+            AP50 = val_metrics.get("AP50", 0.0)
+            AP_person = val_metrics.get("AP-per-class/person", 0.0)
+            AP_cat = val_metrics.get("AP-per-class/cat", 0.0)
+            val_print_str += f"AP: {AP:.3f} AP50: {AP50:.3f} AP-person: {AP_person:.3f} AP-cat: {AP_cat:.3f}"
+            accelerator.print(val_print_str)
+
+            log = {
+                f"val/{k}": v
+                for k, v in val_metrics.items()
+                if not k.startswith("loss")
+            }
+            log["loss/val"] = val_metrics["loss"]
+            accelerator.log(log, step=global_step)
 
     accelerator.end_training()
 
 
 def run_validation(
-    accelerator, model, criterion, val_dataloader, limit_val_iters=0, global_step=0
+    accelerator,
+    model,
+    criterion,
+    val_dataloader,
+    detection_decoder,
+    limit_val_iters=0,
+    global_step=0,
 ):
     # debug multiprocessing by printing accelerator.local_process_index
 
     if accelerator.is_main_process:
         metrics = DetectionMetrics(val_dataloader.dataset.class_names)
         total_loss = torch.tensor(0.0, device=accelerator.device)
-        total_num_images = torch.tensor(0, dtype=torch.long, device=accelerator.device)
+        total_objectness_loss = torch.tensor(0.0, device=accelerator.device)
+        total_class_loss = torch.tensor(0.0, device=accelerator.device)
+        total_coordinates_loss = torch.tensor(0.0, device=accelerator.device)
 
     model.eval()
     with torch.inference_mode():
@@ -304,55 +341,101 @@ def run_validation(
             outputs = model(images)
             with accelerator.autocast():
                 loss_dict = criterion(outputs, batch)
-                loss = loss_dict["loss"] * images.size(0)  # total loss
 
-            num_images = torch.tensor(
-                images.size(0), dtype=torch.long, device=accelerator.device
-            )
-            (loss, num_images) = accelerator.gather((loss, num_images))
             outputs = accelerator.gather_for_metrics(outputs)
-            # need to gather batch["boxes"], batch["class_idx"], batch["iscrowd"]
+            loss_dict = accelerator.gather_for_metrics(loss_dict)
+
+            # These are all lists of tensors
+            gathered_batch = {
+                k: v
+                for k, v in batch.items()
+                if k in ["image", "boxes", "class_idx", "iscrowd"]
+            }
+            gathered_batch = accelerator.gather_for_metrics(gathered_batch)
 
             if accelerator.is_main_process:
-                total_loss += loss.sum()
-                total_num_images += num_images.sum()
-                preds = torch.argmax(logits, dim=1)
-                metrics.add_batch(predictions=preds, references=labels)
-                topk_accuracy.add_batch(predictions=logits, references=labels)
+                total_loss += loss_dict["loss"].sum()
+                total_objectness_loss += loss_dict["objectness_loss"].sum()
+                total_class_loss += loss_dict["class_loss"].sum()
+                total_coordinates_loss += loss_dict["coordinates_loss"].sum()
 
-            # log the predictions for the first batch
-            # Accelerate tensorboard tracker
-            # https://github.com/huggingface/accelerate/blob/main/src/accelerate/tracking.py#L165
-            if accelerator.is_main_process and step == 0:
-                pred_class_names = [
-                    val_dataloader.dataset.label_names[p] for p in preds
-                ]
-                gt_class_names = batch["class_name"]
-                image_array = create_image_grid(
-                    images.cpu(), pred_class_names, gt_class_names, max_images=50
-                )
-                tensorboard = accelerator.get_tracker("tensorboard")
-                tensorboard.log_images(
-                    {"val/predictions": image_array},
-                    step=global_step,
-                    dataformats="HWC",
-                )
+                preds = detection_decoder(
+                    outputs, objectness_threshold=0.5, iou_threshold=0.5
+                ) # cpu
+                gathered_batch = {
+                    k: v.detach().cpu() for k, v in gathered_batch.items()
+                }
+                metrics.update(preds, gathered_batch)
+
+                # log the predictions for the first batch
+                # Accelerate tensorboard tracker
+                # https://github.com/huggingface/accelerate/blob/main/src/accelerate/tracking.py#L165
+                if step == 0:
+                    # lower objectness threshold yields more predictions
+                    preds_low = detection_decoder(
+                        outputs, objectness_threshold=0.1, iou_threshold=0.5
+                    )  # cpu
+
+                    batch_flat = []
+                    batch_flat = []
+                    for i in range(gathered_batch["image"].shape[0]):
+                        item = {k: v[i] for k, v in gathered_batch.items()}
+                        item["class_names"] = [
+                            val_dataloader.dataset.class_names[c]
+                            for c in item["class_idx"].tolist()
+                        ]
+                        batch_flat.append(item)
+
+                    vis_gt = plot_grid(
+                        batch_flat,
+                        max_images=24,
+                        num_cols=4,
+                        font_size=20,
+                        box_color="green",
+                        fig_scaling=5,
+                    )
+                    vis_preds = plot_grid(
+                        preds,
+                        max_images=24,
+                        num_cols=4,
+                        font_size=20,
+                        box_color="red",
+                        fig_scaling=5,
+                    )
+                    vis_preds_low = plot_grid(
+                        preds_low,
+                        max_images=24,
+                        num_cols=4,
+                        font_size=20,
+                        box_color="red",
+                        fig_scaling=5,
+                    )
+
+                    tensorboard = accelerator.get_tracker("tensorboard")
+                    tensorboard.log_images(
+                        {
+                            "val-ground-truth": vis_gt,
+                            "val-predictions": vis_preds,
+                            "val-predictions-low": vis_preds_low,
+                        },
+                        step=global_step,
+                        dataformats="HWC",
+                    )
 
     val_metrics = {}
     if accelerator.is_main_process:
-        val_metrics = metrics.compute(
-            f1={"average": "macro"},
-            precision={"average": "macro", "zero_division": 0},
-            recall={"average": "macro", "zero_division": 0},
-        )
-        val_metrics["top_1_accuracy"] = val_metrics.pop("accuracy")
-        val_top5_acc = topk_accuracy.compute(
-            k=5, labels=np.arange(val_dataloader.dataset.num_classes)
-        )
-        val_metrics.update(val_top5_acc)
+        val_metrics = metrics.compute()
 
-        avg_loss = (total_loss / total_num_images).item()
-        val_metrics["loss"] = avg_loss
+        num_batches = len(val_dataloader) * accelerator.num_processes
+        val_metrics["loss/val"] = (total_loss / num_batches).item()
+        val_metrics["loss-objectness/val"] = (
+            total_objectness_loss / num_batches
+        ).item()
+        val_metrics["loss-classification/val"] = (total_class_loss / num_batches).item()
+        val_metrics["loss-coordinates/val"] = (
+            total_coordinates_loss / num_batches
+        ).item()
+
     return val_metrics
 
 
@@ -397,10 +480,20 @@ Run training loop for ResNeXt model on ImageNet dataset.
         help="Limit number of val iterations per epoch",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
+        "--resume",
+        action="store_true",
+        help="Resume training from the latest checkpoint if this flag is set.",
+    )
+    parser.add_argument(
+        "--resume-from-checkpoint",
         type=str,
         default=None,
-        help="If the training should continue from a checkpoint folder.",
+        help="Path to a specific checkpoint folder that the training should resume from.",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Only run evaluation on the validation set.",
     )
     return parser.parse_args()
 
@@ -416,7 +509,9 @@ if __name__ == "__main__":
         lr_warmup_epochs=args.lr_warmup_epochs,
         limit_train_iters=args.limit_train_iters,
         limit_val_iters=args.limit_val_iters,
+        resume=args.resume,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        eval_only=args.eval_only,
     )
 
     sys.exit(train_yolo(config))
