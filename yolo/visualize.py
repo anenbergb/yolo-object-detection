@@ -28,6 +28,7 @@ def plot(
     box_width=3,
     font="FreeSans.ttf",
     font_size=20,
+    fig_scaling=3,
     **imshow_kwargs,
 ):
     if not isinstance(imgs[0], list):
@@ -36,7 +37,7 @@ def plot(
 
     num_rows = len(imgs)
     num_cols = len(imgs[0])
-    fig_scaling = 3
+    fig_scaling = fig_scaling
     fig, axs = plt.subplots(
         nrows=num_rows,
         ncols=num_cols,
@@ -66,7 +67,7 @@ def plot(
                 img /= img.max()
 
             img = F.to_dtype(img, torch.uint8, scale=True)
-            if boxes is not None:
+            if boxes is not None and len(boxes) > 0:
                 labels = None
                 if class_names is not None and scores is not None:
                     labels = [

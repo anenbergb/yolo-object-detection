@@ -1,12 +1,15 @@
 import torch
 from torch import nn
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import itertools
 from collections import Counter
-from torchvision.ops import box_iou
+from torchvision.ops import box_iou, batched_nms
 from torchvision import tv_tensors
-from torchvision.transforms.v2.functional import convert_bounding_box_format
-
+from torchvision.transforms.v2.functional import (
+    convert_bounding_box_format,
+    clamp_bounding_boxes,
+    sanitize_bounding_boxes,
+)
 
 ################################
 # Create a Lx4 anchor box grid
@@ -367,8 +370,98 @@ class DecodeBoxes(nn.Module):
         )  # [1,L,2]
 
     def forward(self, tx_ty_tw_th):
+        # Return the boxes as XYXY
         tx_ty, tw_th = torch.split(tx_ty_tw_th, [2, 2], dim=-1)  # .shape [N,L,2]
         bx_by = self.scale_map * (torch.sigmoid(tx_ty) + self.cxcy_map)
         bw_bh = self.anchor_map * torch.exp(tw_th)
-        bx_by_bw_bh = torch.cat([bx_by, bw_bh], axis=-1)
-        return bx_by_bw_bh
+
+        # Convert the boxes from CXCYWH to XYXY
+        half_bw_bh = bw_bh / 2
+        boxes = torch.cat([bx_by - half_bw_bh, bx_by + half_bw_bh], axis=-1)
+        # Clamp the boxes to wtihin the image bounds
+        boxes[..., [0, 2]].clamp_(min=0, max=self.image_width)
+        boxes[..., [1, 3]].clamp_(min=0, max=self.image_height)
+        return boxes
+
+
+class DecodeDetections(nn.Module):
+    def __init__(
+        self,
+        anchors: List[Tuple[int, int]],
+        scales: List[int],
+        image_height: int,
+        image_width: int,
+        class_names: List[str],
+        num_anchors_per_scale: int = 3,
+        box_min_size: float = 1.0,
+        box_min_area: float = 1.0,
+    ):
+        super().__init__()
+        self.image_size = (image_height, image_width)
+        self.class_names = class_names
+        self.box_min_size = box_min_size
+        self.box_min_area = box_min_area
+        self.box_decoder = DecodeBoxes(
+            anchors, scales, image_height, image_width, num_anchors_per_scale
+        )
+
+    def forward(
+        self,
+        preds_dict: Dict[str, torch.Tensor],
+        objectness_threshold: float = 0.5,
+        iou_threshold: float = 0.5,
+    ):
+        boxes = self.box_decoder(preds_dict["tx_ty_tw_th"].detach().cpu())  # (N,L,4)
+        objectness = torch.sigmoid(preds_dict["objectness"].detach().cpu()).squeeze(
+            -1
+        )  # (N,L)
+        class_probs = torch.sigmoid(
+            preds_dict["class_logits"].detach().cpu()
+        )  # (N,L,80)
+
+        batch_size = boxes.shape[0]
+        mask = objectness > objectness_threshold
+        preds_per_image = []
+        for i in range(batch_size):
+            image_boxes = boxes[i][mask[i]]
+            image_objectness = objectness[i][mask[i]]
+            image_class_probs = class_probs[i][mask[i]]
+
+            image_max_class_probs, image_max_class_indices = torch.max(
+                image_class_probs, dim=1
+            )
+            kept_indices = batched_nms(
+                image_boxes,
+                image_max_class_probs,
+                image_max_class_indices,
+                iou_threshold,
+            )
+            image_boxes = image_boxes[kept_indices]
+            tv_boxes = tv_tensors.BoundingBoxes(
+                image_boxes, format="XYXY", canvas_size=self.image_size
+            )
+            tv_boxes, sanitize_mask = sanitize_bounding_boxes(
+                tv_boxes, min_size=self.box_min_size, min_area=self.box_min_area
+            )
+
+            image_objectness = image_objectness[kept_indices][sanitize_mask]
+            image_max_class_probs = image_max_class_probs[kept_indices][sanitize_mask]
+            image_max_class_indices = image_max_class_indices[kept_indices][
+                sanitize_mask
+            ]
+            image_scores = image_objectness * image_max_class_probs
+
+            class_names = [
+                self.class_names[c] for c in image_max_class_indices.tolist()
+            ]
+            preds_per_image.append(
+                {
+                    "boxes": tv_boxes,
+                    "objectness": image_objectness,
+                    "class_probs": image_max_class_probs,
+                    "scores": image_scores,
+                    "labels": image_max_class_indices,
+                    "class_names": class_names,
+                }
+            )
+        return preds_per_image
