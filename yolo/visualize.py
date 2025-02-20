@@ -6,10 +6,30 @@ import torch
 from torchvision.utils import draw_bounding_boxes, draw_segmentation_masks
 from torchvision import tv_tensors
 from torchvision.transforms.v2 import functional as F
+import itertools
+
+
+def plot_grid(
+    image_dicts,
+    max_images=25,
+    num_cols=5,
+    **kwargs,
+):
+    image_target_tuples = [(x["image"], x) for x in image_dicts][:max_images]
+    image_rows = [list(x) for x in itertools.batched(image_target_tuples, num_cols)]
+    return plot(image_rows, **kwargs)
 
 
 # adopted from https://github.com/pytorch/vision/blob/main/gallery/transforms/helpers.py
-def plot(imgs, row_title=None, **imshow_kwargs):
+def plot(
+    imgs,
+    row_title=None,
+    box_color="green",
+    box_width=3,
+    font="FreeSans.ttf",
+    font_size=20,
+    **imshow_kwargs,
+):
     if not isinstance(imgs[0], list):
         # Make a 2d grid even if there's just 1 row
         imgs = [imgs]
@@ -32,6 +52,8 @@ def plot(imgs, row_title=None, **imshow_kwargs):
                 if isinstance(target, dict):
                     boxes = target.get("boxes")
                     masks = target.get("masks")
+                    class_names = target.get("class_names")
+                    scores = target.get("scores")
                 elif isinstance(target, tv_tensors.BoundingBoxes):
                     boxes = target
                 else:
@@ -45,7 +67,25 @@ def plot(imgs, row_title=None, **imshow_kwargs):
 
             img = F.to_dtype(img, torch.uint8, scale=True)
             if boxes is not None:
-                img = draw_bounding_boxes(img, boxes, colors="yellow", width=3)
+                labels = None
+                if class_names is not None and scores is not None:
+                    labels = [
+                        f"{class_names[i]}: {scores[i]:.2f}"
+                        for i in range(len(class_names))
+                    ]
+                elif class_names is not None:
+                    labels = class_names
+                img = draw_bounding_boxes(
+                    img,
+                    boxes,
+                    labels=labels,
+                    colors=box_color,
+                    fill=False,
+                    width=box_width,
+                    font=font,
+                    font_size=font_size,
+                    label_colors=box_color,
+                )
             if masks is not None:
                 img = draw_segmentation_masks(
                     img,
