@@ -25,6 +25,7 @@ setup(
         "tabulate",
         "fiftyone",
         "pycocotools",
+        "torchmetrics[detection]",
     ],
     extras_require={
         "torch": [

@@ -11,3 +11,7 @@ FiftyOne can be configured by editing `~/.fiftyone/config.json`. See the [FiftyO
 # Yolo References
 * https://github.com/pjreddie/darknet
 * https://pylessons.com/YOLOv3-code-explanation
+
+
+# Torchmetrics
+* https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html
