@@ -83,9 +83,7 @@ class DetectionMetrics:
 
     def __init__(self, class_names: List[str]):
         # Use the default IOU thresholds of [0.5,...,0.95] with step 0.01
-        self.metric = MeanAveragePrecision(
-            box_format="xyxy", iou_type="bbox", class_metrics=True
-        )
+        self.metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", class_metrics=True)
         self.class_names = class_names
 
     def update(self, preds, batch):
@@ -100,9 +98,7 @@ class DetectionMetrics:
         """
         targets = [
             {"boxes": boxes, "labels": labels, "iscrowd": iscrowd}
-            for boxes, labels, iscrowd in zip(
-                batch["boxes"], batch["class_idx"], batch["iscrowd"]
-            )
+            for boxes, labels, iscrowd in zip(batch["boxes"], batch["class_idx"], batch["iscrowd"])
         ]
         self.metric.update(preds, targets)
 

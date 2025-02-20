@@ -43,9 +43,7 @@ def make_spatial_anchors_per_scale(
 
     # Expand grid_centers and anchors to enable broadcasting
     grid_centers_expanded = grid_xy_centers.unsqueeze(-2)  # Shape: (13, 19, 1, 2)
-    anchor_halfs_expanded = anchor_halfs.unsqueeze(0).unsqueeze(
-        0
-    )  # Shape: (1, 1, 3, 2)
+    anchor_halfs_expanded = anchor_halfs.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 3, 2)
     # Compute the upper-left xy and lower-right xy coordinates in a vectorized manner
     # to get 2x tensors of shape (13,19,3,2), then concatenated to (13,19,3,4)
     grid_anchors_xyxy = torch.cat(
@@ -55,9 +53,7 @@ def make_spatial_anchors_per_scale(
         ],
         axis=-1,
     )
-    grid_anchors_xyxy_flatten = grid_anchors_xyxy.flatten(
-        end_dim=-2
-    )  # .shape (13*19*3, 4)
+    grid_anchors_xyxy_flatten = grid_anchors_xyxy.flatten(end_dim=-2)  # .shape (13*19*3, 4)
 
     if verbose:
         print(
@@ -80,9 +76,7 @@ def make_spatial_anchors(
 ):
     anchors_per_scale = list(itertools.batched(anchors_list, num_anchors_per_scale))
     spatial_anchors_per_scale = [
-        make_spatial_anchors_per_scale(
-            anchors, scale, image_height, image_width, verbose=verbose
-        )
+        make_spatial_anchors_per_scale(anchors, scale, image_height, image_width, verbose=verbose)
         for anchors, scale in zip(anchors_per_scale, scales)
     ]
     spatial_anchors = torch.cat(spatial_anchors_per_scale, axis=0)
@@ -123,9 +117,7 @@ def make_anchor_map(
         # Reshape anchors to (1, 1, 3, 2) to enable broadcasting
         anchors_expanded = anchors.unsqueeze(0).unsqueeze(0)
         # Expand anchors to the desired shape (13, 19, 3, 2)
-        anchors_copied = anchors_expanded.expand(
-            scaled_height, scaled_width, len(anchors), 2
-        )
+        anchors_copied = anchors_expanded.expand(scaled_height, scaled_width, len(anchors), 2)
         anchors_flat = anchors_copied.flatten(end_dim=-2)
         anchors_maps.append(anchors_flat)
     anchors_map = torch.cat(anchors_maps, axis=0)
@@ -148,9 +140,7 @@ def make_cxcy_map(
         grid_y, grid_x = torch.meshgrid(y_axis, x_axis, indexing="ij")  # .shape [13,19]
         grid_xy = torch.stack([grid_x, grid_y], dim=-1)  # .shape [13, 19, 2]
         grid_xy_expanded = grid_xy.unsqueeze(2)
-        grid_xy_copied = grid_xy_expanded.expand(
-            *grid_xy.shape[:2], num_anchors_per_scale, 2
-        )
+        grid_xy_copied = grid_xy_expanded.expand(*grid_xy.shape[:2], num_anchors_per_scale, 2)
         grid_xy_flat = grid_xy_copied.flatten(end_dim=-2)
         cxcy_map_list.append(grid_xy_flat)
     cxcy_map = torch.cat(cxcy_map_list, axis=0)
@@ -197,18 +187,14 @@ def get_valid_gt_cxcy(
     for scale in scales:
         scaled_height = int(image_height / scale)
         scaled_width = int(image_width / scale)
-        binary_mask = torch.zeros(
-            len(boxes), scaled_height, scaled_width, num_anchors_per_scale
-        )
+        binary_mask = torch.zeros(len(boxes), scaled_height, scaled_width, num_anchors_per_scale)
         cxcy = torch.floor(box_centers / scale).to(torch.long)
         binary_mask[torch.arange(len(boxes)), cxcy[:, 1], cxcy[:, 0]] = 1
         binary_masks.append(binary_mask.flatten(start_dim=1))
 
     valid_gt_cxcy = torch.cat(binary_masks, axis=1)
     if verbose:
-        print(
-            f"valid_gt_cxcy {tuple(valid_gt_cxcy.shape)} {Counter(valid_gt_cxcy.flatten().tolist())}"
-        )
+        print(f"valid_gt_cxcy {tuple(valid_gt_cxcy.shape)} {Counter(valid_gt_cxcy.flatten().tolist())}")
     return valid_gt_cxcy
 
 
@@ -224,9 +210,7 @@ def make_spatial_anchor_mask(
     batch_size = len(boxes_per_image)
 
     if verbose:
-        print(
-            f"[make_spatial_anchor_mask] spatial_anchors.shape {tuple(spatial_anchors.shape)}"
-        )
+        print(f"[make_spatial_anchor_mask] spatial_anchors.shape {tuple(spatial_anchors.shape)}")
         num_boxes_per_image = [len(x) for x in boxes_per_image]
         num_boxes = sum(num_boxes_per_image)
         print(
@@ -236,9 +220,7 @@ def make_spatial_anchor_mask(
     # >= 0 index into gt boxes (highest IOU) per image
     # -1: ignore (IOU > 0.5)
     # -2: negative examples. anchors with IOU <= 0.5
-    spatial_anchor_mask = -2 * torch.ones(
-        batch_size, len(spatial_anchors), dtype=torch.long
-    )
+    spatial_anchor_mask = -2 * torch.ones(batch_size, len(spatial_anchors), dtype=torch.long)
 
     for image_idx, boxes in enumerate(boxes_per_image):
 
@@ -249,16 +231,12 @@ def make_spatial_anchor_mask(
         spatial_anchor_mask[image_idx, anchor_idx] = -1
 
         # (B,L)
-        valid_gt_cxcy = get_valid_gt_cxcy(
-            boxes, scales, image_height, image_width, num_anchors_per_scale
-        )
+        valid_gt_cxcy = get_valid_gt_cxcy(boxes, scales, image_height, image_width, num_anchors_per_scale)
         valid_ious = valid_gt_cxcy * ious
 
         # Find the max value per row
         max_ious, anchor_idx = torch.max(valid_ious, dim=1, keepdim=True)
-        spatial_anchor_mask[image_idx, anchor_idx] = torch.arange(len(boxes)).unsqueeze(
-            1
-        )
+        spatial_anchor_mask[image_idx, anchor_idx] = torch.arange(len(boxes)).unsqueeze(1)
 
     if verbose:
         num_best_match = torch.sum(spatial_anchor_mask >= 0).item()
@@ -353,21 +331,13 @@ class DecodeBoxes(nn.Module):
         self.image_height = image_height
         self.image_width = image_width
 
-        self.scale_map = make_scale_map(
-            scales, image_height, image_width, num_anchors_per_scale
-        ).view(
+        self.scale_map = make_scale_map(scales, image_height, image_width, num_anchors_per_scale).view(
             1, -1, 1
         )  # [1,L,1]
-        self.anchor_map = make_anchor_map(
-            anchors, scales, image_height, image_width, num_anchors_per_scale
-        ).unsqueeze(
+        self.anchor_map = make_anchor_map(anchors, scales, image_height, image_width, num_anchors_per_scale).unsqueeze(
             0
         )  # [1,L,2]
-        self.cxcy_map = make_cxcy_map(
-            scales, image_height, image_width, num_anchors_per_scale
-        ).unsqueeze(
-            0
-        )  # [1,L,2]
+        self.cxcy_map = make_cxcy_map(scales, image_height, image_width, num_anchors_per_scale).unsqueeze(0)  # [1,L,2]
 
     def forward(self, tx_ty_tw_th):
         # Return the boxes as XYXY
@@ -401,9 +371,7 @@ class DecodeDetections(nn.Module):
         self.class_names = class_names
         self.box_min_size = box_min_size
         self.box_min_area = box_min_area
-        self.box_decoder = DecodeBoxes(
-            anchors, scales, image_height, image_width, num_anchors_per_scale
-        )
+        self.box_decoder = DecodeBoxes(anchors, scales, image_height, image_width, num_anchors_per_scale)
 
     def forward(
         self,
@@ -412,12 +380,8 @@ class DecodeDetections(nn.Module):
         iou_threshold: float = 0.5,
     ):
         boxes = self.box_decoder(preds_dict["tx_ty_tw_th"].detach().cpu())  # (N,L,4)
-        objectness = torch.sigmoid(preds_dict["objectness"].detach().cpu()).squeeze(
-            -1
-        )  # (N,L)
-        class_probs = torch.sigmoid(
-            preds_dict["class_logits"].detach().cpu()
-        )  # (N,L,80)
+        objectness = torch.sigmoid(preds_dict["objectness"].detach().cpu()).squeeze(-1)  # (N,L)
+        class_probs = torch.sigmoid(preds_dict["class_logits"].detach().cpu())  # (N,L,80)
 
         batch_size = boxes.shape[0]
         mask = objectness > objectness_threshold
@@ -427,9 +391,7 @@ class DecodeDetections(nn.Module):
             image_objectness = objectness[i][mask[i]]
             image_class_probs = class_probs[i][mask[i]]
 
-            image_max_class_probs, image_max_class_indices = torch.max(
-                image_class_probs, dim=1
-            )
+            image_max_class_probs, image_max_class_indices = torch.max(image_class_probs, dim=1)
             kept_indices = batched_nms(
                 image_boxes,
                 image_max_class_probs,
@@ -437,23 +399,17 @@ class DecodeDetections(nn.Module):
                 iou_threshold,
             )
             image_boxes = image_boxes[kept_indices]
-            tv_boxes = tv_tensors.BoundingBoxes(
-                image_boxes, format="XYXY", canvas_size=self.image_size
-            )
+            tv_boxes = tv_tensors.BoundingBoxes(image_boxes, format="XYXY", canvas_size=self.image_size)
             tv_boxes, sanitize_mask = sanitize_bounding_boxes(
                 tv_boxes, min_size=self.box_min_size, min_area=self.box_min_area
             )
 
             image_objectness = image_objectness[kept_indices][sanitize_mask]
             image_max_class_probs = image_max_class_probs[kept_indices][sanitize_mask]
-            image_max_class_indices = image_max_class_indices[kept_indices][
-                sanitize_mask
-            ]
+            image_max_class_indices = image_max_class_indices[kept_indices][sanitize_mask]
             image_scores = image_objectness * image_max_class_probs
 
-            class_names = [
-                self.class_names[c] for c in image_max_class_indices.tolist()
-            ]
+            class_names = [self.class_names[c] for c in image_max_class_indices.tolist()]
             preds_per_image.append(
                 {
                     "boxes": tv_boxes,

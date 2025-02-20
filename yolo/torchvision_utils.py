@@ -41,9 +41,7 @@ def set_weight_decay(
                 continue
             is_custom_key = False
             for key in custom_keys:
-                target_name = (
-                    f"{prefix}.{name}" if prefix != "" and "." in key else name
-                )
+                target_name = f"{prefix}.{name}" if prefix != "" and "." in key else name
                 if key == target_name:
                     params[key].append(p)
                     is_custom_key = True
@@ -63,7 +61,5 @@ def set_weight_decay(
     param_groups = []
     for key in params:
         if len(params[key]) > 0:
-            param_groups.append(
-                {"params": params[key], "weight_decay": params_weight_decay[key]}
-            )
+            param_groups.append({"params": params[key], "weight_decay": params_weight_decay[key]})
     return param_groups

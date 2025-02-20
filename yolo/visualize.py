@@ -70,10 +70,7 @@ def plot(
             if boxes is not None and len(boxes) > 0:
                 labels = None
                 if class_names is not None and scores is not None:
-                    labels = [
-                        f"{class_names[i]}: {scores[i]:.2f}"
-                        for i in range(len(class_names))
-                    ]
+                    labels = [f"{class_names[i]}: {scores[i]:.2f}" for i in range(len(class_names))]
                 elif class_names is not None:
                     labels = class_names
                 img = draw_bounding_boxes(

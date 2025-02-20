@@ -188,9 +188,7 @@ def train_yolo(config: TrainingConfig):
     # consider swapping this for Adam
     optimizer_name = config.optimizer_name.lower()
     if config.optimizer_name == "adamw":
-        optimizer = torch.optim.AdamW(
-            parameters, lr=config.lr, weight_decay=config.weight_decay
-        )
+        optimizer = torch.optim.AdamW(parameters, lr=config.lr, weight_decay=config.weight_decay)
     elif config.optimizer_name == "sgd":
         optimizer = torch.optim.SGD(
             parameters,
@@ -199,9 +197,7 @@ def train_yolo(config: TrainingConfig):
             weight_decay=config.weight_decay,
         )
     else:
-        raise RuntimeError(
-            f"Invalid optimizer {optimizer_name}. Only SGD and AdamW are supported."
-        )
+        raise RuntimeError(f"Invalid optimizer {optimizer_name}. Only SGD and AdamW are supported.")
 
     scheduler1 = torch.optim.lr_scheduler.LinearLR(
         optimizer,
@@ -222,9 +218,7 @@ def train_yolo(config: TrainingConfig):
     )
     if config.resume:
         accelerator.load_state()
-    elif config.resume_from_checkpoint is not None and os.path.exists(
-        config.resume_from_checkpoint
-    ):
+    elif config.resume_from_checkpoint is not None and os.path.exists(config.resume_from_checkpoint):
         accelerator.load_state(config.resume_from_checkpoint)
 
     global_step = 0
@@ -234,11 +228,7 @@ def train_yolo(config: TrainingConfig):
         for step, batch in (
             progress_bar := tqdm(
                 enumerate(train_dataloader),
-                total=(
-                    len(train_dataloader)
-                    if config.limit_train_iters == 0
-                    else config.limit_train_iters
-                ),
+                total=(len(train_dataloader) if config.limit_train_iters == 0 else config.limit_train_iters),
                 disable=not accelerator.is_local_main_process,
                 desc=f"Epoch {epoch}",
             )
@@ -269,9 +259,7 @@ def train_yolo(config: TrainingConfig):
             progress_bar.set_postfix(**logs)
             logs["loss-objectness/train"] = loss_dict["objectness_loss"].detach().item()
             logs["loss-classification/train"] = loss_dict["class_loss"].detach().item()
-            logs["loss-coordinates/train"] = (
-                loss_dict["coordinates_loss"].detach().item()
-            )
+            logs["loss-coordinates/train"] = loss_dict["coordinates_loss"].detach().item()
             accelerator.log(logs, step=global_step)
             global_step += 1
 
@@ -297,11 +285,7 @@ def train_yolo(config: TrainingConfig):
             val_print_str += f"AP: {AP:.3f} AP50: {AP50:.3f} AP-person: {AP_person:.3f} AP-cat: {AP_cat:.3f}"
             accelerator.print(val_print_str)
 
-            log = {
-                f"val/{k}": v
-                for k, v in val_metrics.items()
-                if not k.startswith("loss")
-            }
+            log = {f"val/{k}": v for k, v in val_metrics.items() if not k.startswith("loss")}
             log["loss/val"] = val_metrics["loss"]
             accelerator.log(log, step=global_step)
 
@@ -346,11 +330,7 @@ def run_validation(
             loss_dict = accelerator.gather_for_metrics(loss_dict)
 
             # These are all lists of tensors
-            gathered_batch = {
-                k: v
-                for k, v in batch.items()
-                if k in ["image", "boxes", "class_idx", "iscrowd"]
-            }
+            gathered_batch = {k: v for k, v in batch.items() if k in ["image", "boxes", "class_idx", "iscrowd"]}
             gathered_batch = accelerator.gather_for_metrics(gathered_batch)
 
             if accelerator.is_main_process:
@@ -359,12 +339,8 @@ def run_validation(
                 total_class_loss += loss_dict["class_loss"].sum()
                 total_coordinates_loss += loss_dict["coordinates_loss"].sum()
 
-                preds = detection_decoder(
-                    outputs, objectness_threshold=0.5, iou_threshold=0.5
-                ) # cpu
-                gathered_batch = {
-                    k: v.detach().cpu() for k, v in gathered_batch.items()
-                }
+                preds = detection_decoder(outputs, objectness_threshold=0.5, iou_threshold=0.5)  # cpu
+                gathered_batch = {k: v.detach().cpu() for k, v in gathered_batch.items()}
                 metrics.update(preds, gathered_batch)
 
                 # log the predictions for the first batch
@@ -372,17 +348,14 @@ def run_validation(
                 # https://github.com/huggingface/accelerate/blob/main/src/accelerate/tracking.py#L165
                 if step == 0:
                     # lower objectness threshold yields more predictions
-                    preds_low = detection_decoder(
-                        outputs, objectness_threshold=0.1, iou_threshold=0.5
-                    )  # cpu
+                    preds_low = detection_decoder(outputs, objectness_threshold=0.1, iou_threshold=0.5)  # cpu
 
                     batch_flat = []
                     batch_flat = []
                     for i in range(gathered_batch["image"].shape[0]):
                         item = {k: v[i] for k, v in gathered_batch.items()}
                         item["class_names"] = [
-                            val_dataloader.dataset.class_names[c]
-                            for c in item["class_idx"].tolist()
+                            val_dataloader.dataset.class_names[c] for c in item["class_idx"].tolist()
                         ]
                         batch_flat.append(item)
 
@@ -428,13 +401,9 @@ def run_validation(
 
         num_batches = len(val_dataloader) * accelerator.num_processes
         val_metrics["loss/val"] = (total_loss / num_batches).item()
-        val_metrics["loss-objectness/val"] = (
-            total_objectness_loss / num_batches
-        ).item()
+        val_metrics["loss-objectness/val"] = (total_objectness_loss / num_batches).item()
         val_metrics["loss-classification/val"] = (total_class_loss / num_batches).item()
-        val_metrics["loss-coordinates/val"] = (
-            total_coordinates_loss / num_batches
-        ).item()
+        val_metrics["loss-coordinates/val"] = (total_coordinates_loss / num_batches).item()
 
     return val_metrics
 
@@ -459,12 +428,8 @@ Run training loop for ResNeXt model on ImageNet dataset.
         default="/media/bryan/ssd01/fiftyone/coco-2017",
         help="Path to the COCO dataset",
     )
-    parser.add_argument(
-        "--train-batch-size", type=int, default=128, help="Training batch size"
-    )
-    parser.add_argument(
-        "--val-batch-size", type=int, default=256, help="Training batch size"
-    )
+    parser.add_argument("--train-batch-size", type=int, default=128, help="Training batch size")
+    parser.add_argument("--val-batch-size", type=int, default=256, help="Training batch size")
     parser.add_argument("--epochs", type=int, default=600, help="Epochs")
     parser.add_argument("--lr-warmup-epochs", type=int, default=5, help="Warmup epochs")
     parser.add_argument(

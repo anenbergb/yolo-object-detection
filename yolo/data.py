@@ -95,9 +95,7 @@ class CocoDataset(torch.utils.data.Dataset):
         self.transform = transform
 
         self.class_id2name = {id: d["name"] for id, d in self.dataset.coco.cats.items()}
-        self.class_id2idx = {
-            id: idx for idx, id in enumerate(self.dataset.coco.cats.keys())
-        }
+        self.class_id2idx = {id: idx for idx, id in enumerate(self.dataset.coco.cats.keys())}
 
         self.class_names = [d["name"] for d in self.dataset.coco.cats.values()]
         self.class_idx2id = {idx: id for id, idx in self.class_id2idx.items()}
@@ -136,9 +134,7 @@ class CocoDataset(torch.utils.data.Dataset):
 
         class_ids = target.pop("labels")
         # target["class_name"] = [self.class_id2name[id.item()] for id in class_ids]
-        target["class_idx"] = torch.tensor(
-            [self.class_id2idx[id.item()] for id in class_ids]
-        )
+        target["class_idx"] = torch.tensor([self.class_id2idx[id.item()] for id in class_ids])
         target["class_id"] = class_ids
         target["iscrowd"] = torch.tensor(target["iscrowd"], dtype=torch.bool)
         if self.transform:
@@ -172,12 +168,8 @@ class CollateWithAnchors:
         self.spatial_anchors = make_spatial_anchors(
             anchors, scales, image_height, image_width, num_anchors_per_scale, verbose
         )
-        self.scale_map = make_scale_map(
-            scales, image_height, image_width, num_anchors_per_scale
-        )
-        self.anchor_map = make_anchor_map(
-            anchors, scales, image_height, image_width, num_anchors_per_scale
-        )
+        self.scale_map = make_scale_map(scales, image_height, image_width, num_anchors_per_scale)
+        self.anchor_map = make_anchor_map(anchors, scales, image_height, image_width, num_anchors_per_scale)
 
     def make_label_tensors(self, batch_boxes, batch_class_idx):
         """
@@ -207,14 +199,10 @@ class CollateWithAnchors:
         )
 
         gt_boxes_label = (spatial_anchor_mask >= 0).to(torch.float).unsqueeze(-1)
-        gt_and_neg_boxes_label = (
-            (spatial_anchor_mask != -1).to(torch.float).unsqueeze(-1)
-        )
+        gt_and_neg_boxes_label = (spatial_anchor_mask != -1).to(torch.float).unsqueeze(-1)
 
         coord_label = torch.zeros(*spatial_anchor_mask.shape, 4, dtype=torch.float)
-        classification_label = torch.zeros(
-            *spatial_anchor_mask.shape, self.num_classes, dtype=torch.float
-        )
+        classification_label = torch.zeros(*spatial_anchor_mask.shape, self.num_classes, dtype=torch.float)
 
         for batch_idx, L_idx in zip(*torch.where(spatial_anchor_mask >= 0)):
             box_idx = spatial_anchor_mask[batch_idx, L_idx]
