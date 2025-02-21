@@ -74,7 +74,7 @@ class TrainingConfig:
     save_image_epochs: int = field(default=1)
     seed: int = field(default=0)
 
-    num_workers: int = field(default=0)
+    num_workers: int = field(default=2)
 
     # Yolo model configuration
     image_size: int = field(default=608)
@@ -286,8 +286,8 @@ def train_yolo(config: TrainingConfig):
             accelerator.log(logs, step=global_step)
             global_step += 1
 
-        # if epoch % config.checkpoint_epochs == 0:
-        #     accelerator.save_state()
+        if epoch % config.checkpoint_epochs == 0:
+            accelerator.save_state()
 
         scheduler.step()  # once per epoch
         val_metrics = run_validation(
@@ -307,10 +307,7 @@ def train_yolo(config: TrainingConfig):
             AP_cat = val_metrics.get("AP-per-class/cat", 0.0)
             val_print_str += f"AP: {AP:.3f} AP50: {AP50:.3f} AP-person: {AP_person:.3f} AP-cat: {AP_cat:.3f}"
             accelerator.print(val_print_str)
-
-            log = {f"val/{k}": v for k, v in val_metrics.items() if not k.startswith("loss")}
-            log["loss/val"] = val_metrics["loss"]
-            accelerator.log(log, step=global_step)
+            accelerator.log(val_metrics, step=global_step)
 
     accelerator.end_training()
 
@@ -431,20 +428,20 @@ def run_validation(
     val_metrics = {}
     if accelerator.is_main_process:
         val_metrics = metrics.compute()
-
         num_batches = len(val_dataloader) * accelerator.num_processes
         val_metrics["loss/val"] = (total_loss / num_batches).item()
         val_metrics["loss-objectness/val"] = (total_objectness_loss / num_batches).item()
         val_metrics["loss-classification/val"] = (total_class_loss / num_batches).item()
         val_metrics["loss-coordinates/val"] = (total_coordinates_loss / num_batches).item()
 
+    accelerator.wait_for_everyone()
     return val_metrics
 
 
 def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         """
-Run training loop for ResNeXt model on ImageNet dataset.
+Run training loop for YoloV3 object detection model on the COCO dataset.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
