@@ -6,11 +6,12 @@ import torch
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from typing import List, Tuple
+import logging
 
 # Huggingface
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration
-
+from safetensors.torch import load_model
 
 from yolo.model import Yolo
 from yolo.data import (
@@ -30,7 +31,7 @@ class TrainingConfig:
     output_dir: str
     overwrite_output_dir: bool = field(default=True)  # overwrite the old model
     eval_only: bool = field(default=False)
-    resume: bool = field(default=False)
+    start_epoch: int = field(default=0)
     resume_from_checkpoint: str = field(default=None)
 
     coco_dataset_root: str = field(default="/media/bryan/ssd01/fiftyone/coco-2017")
@@ -59,6 +60,7 @@ class TrainingConfig:
     weight_decay: float = field(default=0.01)
     norm_weight_decay: float = field(default=0.0)
     gradient_max_norm: float = field(default=2.0)
+    label_smoothing: float = 0.1
 
     # EMA configuration
     model_ema: bool = field(default=True)
@@ -111,6 +113,7 @@ def train_yolo(config: TrainingConfig):
         automatic_checkpoint_naming=True,
         total_limit=config.checkpoint_total_limit,
         save_on_each_node=False,
+        iteration=config.start_epoch,  # the current save iteration
     )
     accelerator = Accelerator(
         mixed_precision=config.mixed_precision,
@@ -122,6 +125,10 @@ def train_yolo(config: TrainingConfig):
     if accelerator.is_main_process:
         os.makedirs(config.output_dir, exist_ok=True)
         accelerator.init_trackers(os.path.basename(config.output_dir))
+
+    # logger = get_logger(__name__, log_level="DEBUG")
+    # logger.info("INFO LEVEL", main_process_only=True)
+    # logger.debug("DEBUG LEVEL", main_process_only=True)
 
     train_dataset = CocoDataset(
         dataset_root=config.coco_dataset_root,
@@ -211,18 +218,35 @@ def train_yolo(config: TrainingConfig):
         optimizer, [scheduler1, scheduler2], milestones=[config.lr_warmup_epochs]
     )
 
-    yololoss = YoloLoss()
+    yololoss = YoloLoss(label_smoothing=config.label_smoothing)
 
     model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, val_dataloader, scheduler
     )
-    if config.resume:
-        accelerator.load_state()
-    elif config.resume_from_checkpoint is not None and os.path.exists(config.resume_from_checkpoint):
-        accelerator.load_state(config.resume_from_checkpoint)
+
+    # ONLY load the model weights from the checkpoint. Leave the optimizer and scheduler as is.
+    if config.resume_from_checkpoint is not None and os.path.exists(config.resume_from_checkpoint):
+        model_fpath = os.path.join(config.resume_from_checkpoint, "model.safetensors")
+        assert os.path.exists(model_fpath), f"Model file {model_fpath} not found"
+        accelerator.print(f"Loading model weights from {model_fpath}")
+        weights_before = model.module.body.conv1.weight.detach().clone()
+        load_model(
+            accelerator._models[0],
+            model_fpath,
+            device=str(accelerator.device),
+        )
+        weight_after = model.module.body.conv1.weight.detach().clone()
+        assert not torch.allclose(
+            weights_before, weight_after
+        ), "Model weights did not change after loading from checkpoint"
+
+    if config.start_epoch > 0:
+        accelerator.print(f"Resuming training from epoch {config.start_epoch}")
+        for _ in range(config.start_epoch):
+            scheduler.step()
 
     global_step = 0
-    for epoch in range(config.epochs):
+    for epoch in range(config.start_epoch, config.epochs):
         total_loss = 0
         model.train()
         for step, batch in (
@@ -238,7 +262,6 @@ def train_yolo(config: TrainingConfig):
 
             optimizer.zero_grad()
 
-            print(batch["image"].dtype)
             outputs = model(batch["image"])
             with accelerator.autocast():
                 loss_dict = yololoss(outputs, batch)
@@ -263,8 +286,8 @@ def train_yolo(config: TrainingConfig):
             accelerator.log(logs, step=global_step)
             global_step += 1
 
-        if epoch % config.checkpoint_epochs == 0:
-            accelerator.save_state()
+        # if epoch % config.checkpoint_epochs == 0:
+        #     accelerator.save_state()
 
         scheduler.step()  # once per epoch
         val_metrics = run_validation(
@@ -329,8 +352,9 @@ def run_validation(
             outputs = accelerator.gather_for_metrics(outputs)
             loss_dict = accelerator.gather_for_metrics(loss_dict)
 
+            images = accelerator.gather(images)
             # These are all lists of tensors
-            gathered_batch = {k: v for k, v in batch.items() if k in ["image", "boxes", "class_idx", "iscrowd"]}
+            gathered_batch = {k: v for k, v in batch.items() if k in ["boxes", "class_idx", "iscrowd"]}
             gathered_batch = accelerator.gather_for_metrics(gathered_batch)
 
             if accelerator.is_main_process:
@@ -350,10 +374,11 @@ def run_validation(
                     # lower objectness threshold yields more predictions
                     preds_low = detection_decoder(outputs, objectness_threshold=0.1, iou_threshold=0.5)  # cpu
 
+                    images = images.detach().cpu()
                     batch_flat = []
-                    batch_flat = []
-                    for i in range(gathered_batch["image"].shape[0]):
+                    for i in range(images.shape[0]):
                         item = {k: v[i] for k, v in gathered_batch.items()}
+                        item["image"] = images[i]
                         item["class_names"] = [
                             val_dataloader.dataset.class_names[c] for c in item["class_idx"].tolist()
                         ]
@@ -445,9 +470,10 @@ Run training loop for ResNeXt model on ImageNet dataset.
         help="Limit number of val iterations per epoch",
     )
     parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume training from the latest checkpoint if this flag is set.",
+        "--start-epoch",
+        type=int,
+        default=0,
+        help="Start epoch, useful for resuming training.",
     )
     parser.add_argument(
         "--resume-from-checkpoint",
@@ -464,6 +490,7 @@ Run training loop for ResNeXt model on ImageNet dataset.
 
 
 if __name__ == "__main__":
+    logging.basicConfig()
     args = get_args()
     config = TrainingConfig(
         output_dir=args.output_dir,
@@ -474,7 +501,7 @@ if __name__ == "__main__":
         lr_warmup_epochs=args.lr_warmup_epochs,
         limit_train_iters=args.limit_train_iters,
         limit_val_iters=args.limit_val_iters,
-        resume=args.resume,
+        start_epoch=args.start_epoch,
         resume_from_checkpoint=args.resume_from_checkpoint,
         eval_only=args.eval_only,
     )

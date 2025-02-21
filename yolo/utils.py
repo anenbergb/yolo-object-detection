@@ -5,15 +5,20 @@ from torchmetrics.detection import MeanAveragePrecision
 
 
 class YoloLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, label_smoothing=0.0):
         super().__init__()
         self.bceloss = nn.BCEWithLogitsLoss(reduction="none")
         self.mseloss = nn.MSELoss(reduction="none")
         self.weight_objectness = 1.0
         self.weight_class = 1.0
         self.weight_coordinates = 1.0
+        self.smoothing = label_smoothing
+
+    def smooth_labels(self, labels, smoothing):
+        return labels * (1 - smoothing) + 0.5 * smoothing
 
     def forward_objectness(self, objectness, gt_boxes_label, gt_and_neg_boxes_label):
+        gt_boxes_label = self.smooth_labels(gt_boxes_label, self.smoothing)
         loss = self.bceloss(objectness, gt_boxes_label)
         loss = (loss * gt_and_neg_boxes_label).sum() / gt_and_neg_boxes_label.sum()
         return loss
@@ -22,6 +27,7 @@ class YoloLoss(nn.Module):
         num_gt_boxes = gt_boxes_label.sum()
         if num_gt_boxes == 0:
             return 0
+        classification_label = self.smooth_labels(classification_label, self.smoothing)
         loss = self.bceloss(class_logits, classification_label)
         loss = (loss * gt_boxes_label).sum() / num_gt_boxes
         return loss
