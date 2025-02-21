@@ -8,7 +8,7 @@ export ACCELERATE_LOG_LEVEL="INFO"
 accelerate launch yolo/train.py \
 --output-dir /media/bryan/ssd01/expr/yolo_from_scratch/300-epochs \
 --train-batch-size 32 --val-batch-size 32 \
---epochs 300 --lr-warmup-epochs 10
+--epochs 300 --lr-warmup-epochs 10 --eval-epochs 10
 
 # DEBUG
 # accelerate launch yolo/train.py \

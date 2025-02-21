@@ -98,6 +98,7 @@ class TrainingConfig:
     # eval
     box_min_size: float = field(default=5.0)
     box_min_area: float = field(default=50.0)
+    eval_epochs: int = field(default=1)
 
 
 def train_yolo(config: TrainingConfig):
@@ -290,24 +291,25 @@ def train_yolo(config: TrainingConfig):
             accelerator.save_state()
 
         scheduler.step()  # once per epoch
-        val_metrics = run_validation(
-            accelerator,
-            model,
-            yololoss,
-            val_dataloader,
-            detection_decoder,
-            limit_val_iters=config.limit_val_iters,
-            global_step=global_step,
-        )
-        if accelerator.is_main_process:
-            val_print_str = f"Validation metrics [Epoch {epoch}]: "
-            AP = val_metrics.get("AP", 0.0)
-            AP50 = val_metrics.get("AP50", 0.0)
-            AP_person = val_metrics.get("AP-per-class/person", 0.0)
-            AP_cat = val_metrics.get("AP-per-class/cat", 0.0)
-            val_print_str += f"AP: {AP:.3f} AP50: {AP50:.3f} AP-person: {AP_person:.3f} AP-cat: {AP_cat:.3f}"
-            accelerator.print(val_print_str)
-            accelerator.log(val_metrics, step=global_step)
+        if epoch % config.eval_epochs == 0:
+            val_metrics = run_validation(
+                accelerator,
+                model,
+                yololoss,
+                val_dataloader,
+                detection_decoder,
+                limit_val_iters=config.limit_val_iters,
+                global_step=global_step,
+            )
+            if accelerator.is_main_process:
+                val_print_str = f"Validation metrics [Epoch {epoch}]: "
+                AP = val_metrics.get("AP", 0.0)
+                AP50 = val_metrics.get("AP50", 0.0)
+                AP_person = val_metrics.get("AP-per-class/person", 0.0)
+                AP_cat = val_metrics.get("AP-per-class/cat", 0.0)
+                val_print_str += f"AP: {AP:.3f} AP50: {AP50:.3f} AP-person: {AP_person:.3f} AP-cat: {AP_cat:.3f}"
+                accelerator.print(val_print_str)
+                accelerator.log(val_metrics, step=global_step)
 
     accelerator.end_training()
 
@@ -491,6 +493,12 @@ Run training loop for YoloV3 object detection model on the COCO dataset.
         action="store_true",
         help="Only run evaluation on the validation set.",
     )
+    parser.add_argument(
+        "--eval-epochs",
+        type=int,
+        default=1,
+        help="Frequency of evaluation in epochs",
+    )
     return parser.parse_args()
 
 
@@ -509,6 +517,7 @@ if __name__ == "__main__":
         start_epoch=args.start_epoch,
         resume_from_checkpoint=args.resume_from_checkpoint,
         eval_only=args.eval_only,
+        eval_epochs=args.eval_epochs,
     )
 
     sys.exit(train_yolo(config))
