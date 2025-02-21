@@ -10,7 +10,7 @@ import logging
 
 # Huggingface
 from accelerate import Accelerator
-from accelerate.utils import ProjectConfiguration
+from accelerate.utils import ProjectConfiguration, gather_object
 from safetensors.torch import load_model
 
 from yolo.model import Yolo
@@ -344,18 +344,18 @@ def run_validation(
             if limit_val_iters > 0 and step >= limit_val_iters:
                 break
 
-            images = batch["image"]
-            outputs = model(images)
+            outputs = model(batch["image"])
             with accelerator.autocast():
                 loss_dict = criterion(outputs, batch)
 
             outputs = accelerator.gather_for_metrics(outputs)
             loss_dict = accelerator.gather_for_metrics(loss_dict)
 
-            images = accelerator.gather(images)
+            images = accelerator.gather(batch["image"])
             # These are all lists of tensors
-            gathered_batch = {k: v for k, v in batch.items() if k in ["boxes", "class_idx", "iscrowd"]}
-            gathered_batch = accelerator.gather_for_metrics(gathered_batch)
+            boxes = gather_object(batch["boxes"])
+            class_idx = gather_object(batch["class_idx"])
+            iscrowd = gather_object(batch["iscrowd"])
 
             if accelerator.is_main_process:
                 total_loss += loss_dict["loss"].sum()
@@ -364,7 +364,15 @@ def run_validation(
                 total_coordinates_loss += loss_dict["coordinates_loss"].sum()
 
                 preds = detection_decoder(outputs, objectness_threshold=0.5, iou_threshold=0.5)  # cpu
-                gathered_batch = {k: v.detach().cpu() for k, v in gathered_batch.items()}
+
+                num_images = outputs["tx_ty_tw_th"].shape[0]
+                # accelerator.gather_for_metrics will automatically truncate the last batch
+                gathered_batch = {
+                    "image": images[:num_images].detach().cpu(),
+                    "boxes": [x.detach().cpu() for x in boxes[:num_images]],
+                    "class_idx": [x.detach().cpu() for x in class_idx[:num_images]],
+                    "iscrowd": [x.detach().cpu() for x in iscrowd[:num_images]],
+                }
                 metrics.update(preds, gathered_batch)
 
                 # log the predictions for the first batch
@@ -372,41 +380,41 @@ def run_validation(
                 # https://github.com/huggingface/accelerate/blob/main/src/accelerate/tracking.py#L165
                 if step == 0:
                     # lower objectness threshold yields more predictions
-                    preds_low = detection_decoder(outputs, objectness_threshold=0.1, iou_threshold=0.5)  # cpu
+                    preds_low = detection_decoder(outputs, objectness_threshold=0.25, iou_threshold=0.5)  # cpu
 
-                    images = images.detach().cpu()
                     batch_flat = []
-                    for i in range(images.shape[0]):
+                    for i in range(gathered_batch["image"].shape[0]):
                         item = {k: v[i] for k, v in gathered_batch.items()}
-                        item["image"] = images[i]
                         item["class_names"] = [
                             val_dataloader.dataset.class_names[c] for c in item["class_idx"].tolist()
                         ]
                         batch_flat.append(item)
+                        preds[i]["image"] = gathered_batch["image"][i]
+                        preds_low[i]["image"] = gathered_batch["image"][i]
 
                     vis_gt = plot_grid(
                         batch_flat,
-                        max_images=24,
-                        num_cols=4,
+                        max_images=25,
+                        num_cols=5,
                         font_size=20,
                         box_color="green",
-                        fig_scaling=5,
+                        fig_scaling=3,
                     )
                     vis_preds = plot_grid(
                         preds,
-                        max_images=24,
-                        num_cols=4,
+                        max_images=25,
+                        num_cols=5,
                         font_size=20,
                         box_color="red",
-                        fig_scaling=5,
+                        fig_scaling=3,
                     )
                     vis_preds_low = plot_grid(
                         preds_low,
-                        max_images=24,
-                        num_cols=4,
+                        max_images=25,
+                        num_cols=5,
                         font_size=20,
                         box_color="red",
-                        fig_scaling=5,
+                        fig_scaling=3,
                     )
 
                     tensorboard = accelerator.get_tracker("tensorboard")
