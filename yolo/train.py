@@ -291,7 +291,7 @@ def train_yolo(config: TrainingConfig):
             accelerator.save_state()
 
         scheduler.step()  # once per epoch
-        if epoch % config.eval_epochs == 0:
+        if epoch % config.eval_epochs == 0 or epoch == config.epochs - 1:
             val_metrics = run_validation(
                 accelerator,
                 model,
