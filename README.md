@@ -3,9 +3,20 @@ A (mostly) from scratch implementation of the YoloV3 neural network object detec
 
 As described in the [YoloV3 paper](https://arxiv.org/abs/1804.02767), the objectness score is predicted for each bounding box using logistic regression. The objectness loss is only calculated for the singular anchor box that best overlaps the ground truth bounding box, and for the anchor boxes with less than or equal to 0.5 overlap. Anchor boxes that overlap with the ground truth box by greater than 0.5 are ignored in the objectness loss calculation. The mean squared error bounding box loss and the binary cross entropy multilabel classification loss are only calculated for the anchor boxes that most overlap.
 
+I use fairly simple data augmentation such as RandomPhotometricDistort and RandomHorizontalFlip. More sophisticated data augmentation would certainly improve the model performance. I also only train the model on fixed size input -- e.g., I resize all the images to 608x608 square dimensions. The model performance could be improved by randomly resizing the images while maintaining the aspect ratio, and then applying letterbox padding such that the minibatch is of a consistent size.
+
+
 [Huggingface Accelerate library](https://huggingface.co/docs/accelerate/en/index) is used to manage the distributed and mixed precision training configuration rather than directly calling underlying torch primatives. 
 
 The [Mean Average Precision routine from the Torchmetrics library](https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html) is used for periodic mAP calculation.
+
+The YoloV3 box encoding equations are shown below. Notice that the scale factor of the feature pyramid (e.g. 8x, 16x, 32x) should be multiplied against $b_x$ and $b_y$ to get the bounding box center in the original image space.
+
+![image](https://github.com/user-attachments/assets/d2698001-e2d9-4d55-b0b3-5a5d5cdb32b3)
+
+# Example Results
+
+Tensorboard is used to log the loss, evaluation metrics (mean average precision), and image predictions on the validation set.
 
 
 # FiftyOne COCO dataset
