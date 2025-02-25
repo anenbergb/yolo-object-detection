@@ -60,7 +60,7 @@ class TrainingConfig:
     weight_decay: float = field(default=0.01)
     norm_weight_decay: float = field(default=0.0)
     gradient_max_norm: float = field(default=2.0)
-    label_smoothing: float = 0.1
+    label_smoothing: float = 0.0
 
     # EMA configuration
     model_ema: bool = field(default=True)

@@ -40,7 +40,7 @@ def get_train_transforms(
                 contrast=(0.7, 1.3),
                 saturation=(0.8, 1.2),
                 hue=(-0.05, 0.05),
-                p=0.25,
+                p=0.5,
             ),
             v2.Resize((resize_size, resize_size)),  # resize the image. bilinear
             v2.ClampBoundingBoxes(),  # clamp bounding boxes to be within the image

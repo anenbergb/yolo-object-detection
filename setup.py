@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="yolo",
     version="1.0.0",
-    url="https://github.com/anenbergb/MBAS",
+    url="https://github.com/anenbergb/yolo-object-detection",
     author="Bryan Anenberg",
     author_email="anenbergb@gmail.com",
     description="A fully from scratch implementation of a Yolo style object detector",
