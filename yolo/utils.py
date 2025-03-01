@@ -11,7 +11,7 @@ class YoloLoss(nn.Module):
         self.mseloss = nn.MSELoss(reduction="none")
         self.weight_objectness = 1.0
         self.weight_class = 1.0
-        self.weight_coordinates = 1.0
+        self.weight_coordinates = 5.0
         self.smoothing = label_smoothing
 
     def smooth_labels(self, labels, smoothing):
@@ -20,7 +20,8 @@ class YoloLoss(nn.Module):
     def forward_objectness(self, objectness, gt_boxes_label, gt_and_neg_boxes_label):
         gt_boxes_label = self.smooth_labels(gt_boxes_label, self.smoothing)
         loss = self.bceloss(objectness, gt_boxes_label)
-        loss = (loss * gt_and_neg_boxes_label).sum() / gt_and_neg_boxes_label.sum()
+        # sum the loss for each image and average across the batch
+        loss = (loss * gt_and_neg_boxes_label).sum() / objectness.size(0)
         return loss
 
     def forward_class(self, class_logits, classification_label, gt_boxes_label):
@@ -29,7 +30,7 @@ class YoloLoss(nn.Module):
             return 0
         classification_label = self.smooth_labels(classification_label, self.smoothing)
         loss = self.bceloss(class_logits, classification_label)
-        loss = (loss * gt_boxes_label).sum() / num_gt_boxes
+        loss = (loss * gt_boxes_label).sum() / class_logits.size(0)
         return loss
 
     def forward_coordinates(self, tx_ty_tw_th, coordinates_label, gt_boxes_label):
@@ -37,7 +38,7 @@ class YoloLoss(nn.Module):
         if num_gt_boxes == 0:
             return 0
         loss = self.mseloss(tx_ty_tw_th, coordinates_label)
-        loss = (loss * gt_boxes_label).sum() / num_gt_boxes
+        loss = (loss * gt_boxes_label).sum() / tx_ty_tw_th.size(0)
         return loss
 
     def forward(self, preds, targets):

@@ -327,10 +327,11 @@ def run_validation(
 
     if accelerator.is_main_process:
         metrics = DetectionMetrics(val_dataloader.dataset.class_names)
-        total_loss = torch.tensor(0.0, device=accelerator.device)
-        total_objectness_loss = torch.tensor(0.0, device=accelerator.device)
-        total_class_loss = torch.tensor(0.0, device=accelerator.device)
-        total_coordinates_loss = torch.tensor(0.0, device=accelerator.device)
+        total_num_images = len(val_dataloader.dataset)
+        avg_loss = 0
+        avg_objectness_loss = 0
+        avg_class_loss = 0
+        avg_coordinates_loss = 0
 
     model.eval()
     with torch.inference_mode():
@@ -357,14 +358,15 @@ def run_validation(
             iscrowd = gather_object(batch["iscrowd"])
 
             if accelerator.is_main_process:
-                total_loss += loss_dict["loss"].sum()
-                total_objectness_loss += loss_dict["objectness_loss"].sum()
-                total_class_loss += loss_dict["class_loss"].sum()
-                total_coordinates_loss += loss_dict["coordinates_loss"].sum()
+                num_images = outputs["tx_ty_tw_th"].shape[0]
+
+                avg_loss += loss_dict["loss"].sum().item() * num_images / total_num_images
+                avg_objectness_loss += loss_dict["objectness_loss"].sum().item() * num_images / total_num_images
+                avg_class_loss += loss_dict["class_loss"].sum().item() * num_images / total_num_images
+                avg_coordinates_loss += loss_dict["coordinates_loss"].sum().item() * num_images / total_num_images
 
                 preds = detection_decoder(outputs, objectness_threshold=0.5, iou_threshold=0.5)  # cpu
 
-                num_images = outputs["tx_ty_tw_th"].shape[0]
                 # accelerator.gather_for_metrics will automatically truncate the last batch
                 gathered_batch = {
                     "image": images[:num_images].detach().cpu(),
@@ -430,11 +432,10 @@ def run_validation(
     val_metrics = {}
     if accelerator.is_main_process:
         val_metrics = metrics.compute()
-        num_batches = len(val_dataloader) * accelerator.num_processes
-        val_metrics["loss/val"] = (total_loss / num_batches).item()
-        val_metrics["loss-objectness/val"] = (total_objectness_loss / num_batches).item()
-        val_metrics["loss-classification/val"] = (total_class_loss / num_batches).item()
-        val_metrics["loss-coordinates/val"] = (total_coordinates_loss / num_batches).item()
+        val_metrics["loss/val"] = avg_loss
+        val_metrics["loss-objectness/val"] = avg_objectness_loss
+        val_metrics["loss-classification/val"] = avg_class_loss
+        val_metrics["loss-coordinates/val"] = avg_coordinates_loss
 
     accelerator.wait_for_everyone()
     return val_metrics

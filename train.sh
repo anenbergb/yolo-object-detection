@@ -32,7 +32,14 @@ export ACCELERATE_LOG_LEVEL="INFO"
 
 
 # no label smoothing, p=0.5 for photometric distortion
+# accelerate launch --gpu_ids 0, --num_processes 1 yolo/train.py \
+# --output-dir /media/bryan/ssd01/expr/yolo_from_scratch/100-epochs \
+# --train-batch-size 40 --val-batch-size 40 \
+# --epochs 100 --lr-warmup-epochs 10 --eval-epochs 10
+
+# Update the Yolo loss function normalization such that the loss is normalized by the batch size,
+# not the number of positive anchors (and negative anchors in the case of objectness)
 accelerate launch --gpu_ids 0, --num_processes 1 yolo/train.py \
---output-dir /media/bryan/ssd01/expr/yolo_from_scratch/100-epochs \
+--output-dir /media/bryan/ssd01/expr/yolo_from_scratch/100-epochs-updatedloss \
 --train-batch-size 40 --val-batch-size 40 \
 --epochs 100 --lr-warmup-epochs 10 --eval-epochs 10
