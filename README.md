@@ -18,6 +18,8 @@ The YoloV3 box encoding equations are shown below. Notice that the scale factor 
 
 Tensorboard is used to log the loss, evaluation metrics (mean average precision), and image predictions on the validation set.
 
+See [example-training-run.md](example-training-run.md) for the results from training Yolo for 100 epochs on the COCO dataset.
+
 
 # FiftyOne COCO dataset
 FiftyOne is used to download and visualize the COCO dataset. See the [FiftyOne COCO Integration](https://docs.voxel51.com/integrations/coco.html#coco) guide for more details.
